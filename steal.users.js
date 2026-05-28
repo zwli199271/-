@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         技术博客农场·全自动偷菜浇水版
 // @namespace    http://tampermonkey.net/
-// @version      6.0
-// @description  一键遍历所有好友，自动进入农场 + 偷菜 + 浇水
+// @version      6.1
+// @description  一键遍历所有好友，自动进入农场 + 偷菜 + 浇水，无菜可偷/无地可浇自动跳过
 // @author       zwli
 // @match        https://www.duanwuqiufenmao.top/*
 // @grant        GM_addStyle
@@ -34,7 +34,7 @@
         }
         #steal { background: #e67e22; }
         #water { background: #3498db; }
-        #autoAll { background: #e74c3c; } /* 全自动按钮 */
+        #autoAll { background: #e74c3c; }
     `);
 
     // 创建工具面板
@@ -69,11 +69,10 @@
         alert(`🤲 偷菜完成！共偷 ${count} 块`);
     };
 
-    // 3. 全自动：遍历好友列表 → 进入农场 → 偷菜 → 浇水
+    // 3. 全自动：遍历好友列表 → 进入农场 → 偷菜 → 浇水 → 无操作自动跳过
     document.getElementById('autoAll').onclick = async () => {
         if (!confirm('🚀 开始全自动偷菜浇水？\n会自动遍历所有好友农场执行操作')) return;
 
-        // 获取所有好友的【去偷菜】按钮
         const friendButtons = document.querySelectorAll('.fp-friend .fp-steal-cta');
         if (friendButtons.length === 0) {
             alert('未找到任何好友！');
@@ -82,26 +81,32 @@
 
         alert(`找到 ${friendButtons.length} 位好友，开始全自动操作～`);
 
-        // 逐个处理好友
         for (let i = 0; i < friendButtons.length; i++) {
             const btn = friendButtons[i];
-
-            // 点击进入好友农场
             btn.click();
             console.log(`正在进入第 ${i+1}/${friendButtons.length} 位好友农场`);
 
-            // 等待页面加载（800ms 可根据网速调整）
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            // 自动偷菜
-            const stealBtns = document.querySelectorAll('.fp-btn.steal');
-            stealBtns.forEach(b => b.click());
+            // ==============================================
+            // 智能检测：没有可偷、可浇的地块 → 直接跳过
+            // ==============================================
+            const hasSteal = document.querySelectorAll('.fp-btn.steal').length > 0;
+            const hasWater = document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary').length > 0;
 
-            // 自动浇水
-            const waterBtns = document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary');
-            waterBtns.forEach(b => b.click());
+            if (!hasSteal && !hasWater) {
+                console.log('✅ 无菜可偷、无地可浇，自动跳过该好友');
+                continue; // 直接进入下一个好友
+            }
 
-            // 等待操作完成
+            // 有可操作地块才执行偷菜+浇水
+            if (hasSteal) {
+                document.querySelectorAll('.fp-btn.steal').forEach(b => b.click());
+            }
+            if (hasWater) {
+                document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary').forEach(b => b.click());
+            }
+
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
