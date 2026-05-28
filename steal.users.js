@@ -1,11 +1,15 @@
 // ==UserScript==
 // @name         技术博客农场·全自动偷菜浇水版
 // @namespace    http://tampermonkey.net/
-// @version      6.1
+// @version      7.0
 // @description  一键遍历所有好友，自动进入农场 + 偷菜 + 浇水，无菜可偷/无地可浇自动跳过
 // @author       zwli
 // @match        https://www.duanwuqiufenmao.top/*
 // @grant        GM_addStyle
+// @grant        GM.xmlHttpRequest
+// @grant        unsafeWindow
+// @run-at       document-end
+// @license      MIT
 // ==/UserScript==
 
 (function() {
@@ -69,7 +73,7 @@
         alert(`🤲 偷菜完成！共偷 ${count} 块`);
     };
 
-    // 3. 全自动：遍历好友列表 → 进入农场 → 偷菜 → 浇水 → 无操作自动跳过
+    // 3. 全自动：遍历好友列表 → 进入农场 → 偷菜 + 浇水 → 无操作自动跳过
     document.getElementById('autoAll').onclick = async () => {
         if (!confirm('🚀 开始全自动偷菜浇水？\n会自动遍历所有好友农场执行操作')) return;
 
@@ -88,21 +92,20 @@
 
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            // ==============================================
             // 智能检测：没有可偷、可浇的地块 → 直接跳过
-            // ==============================================
             const hasSteal = document.querySelectorAll('.fp-btn.steal').length > 0;
             const hasWater = document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary').length > 0;
 
             if (!hasSteal && !hasWater) {
                 console.log('✅ 无菜可偷、无地可浇，自动跳过该好友');
-                continue; // 直接进入下一个好友
+                continue;
             }
 
-            // 有可操作地块才执行偷菜+浇水
+            // 执行偷菜
             if (hasSteal) {
                 document.querySelectorAll('.fp-btn.steal').forEach(b => b.click());
             }
+            // 执行浇水
             if (hasWater) {
                 document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary').forEach(b => b.click());
             }
