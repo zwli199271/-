@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         技术博客农场·全自动偷菜浇水版
 // @namespace    http://tampermonkey.net/
-// @version      13.0
-// @description  白天种茉莉 | 晚上种松露 | 一键双倍 | 一键收获 | 全自动偷菜浇水
+// @version      14.0
+// @description  白天种金麦 | 晚上种松露 | 一键双倍 | 一键收获 | 全自动偷菜浇水
 // @author       zwli
 // @match        https://www.duanwuqiufenmao.top/*
 // @grant        GM_addStyle
@@ -46,7 +46,7 @@
     panel.id = 'farmTools';
     panel.innerHTML = `
         <div style="font-weight:bold;margin-bottom:8px">🌱 农场一键工具</div>
-        <button class="farmBtn" id="plantDay">🌞 白天种植(茉莉)</button>
+        <button class="farmBtn" id="plantDay">🌞 白天种植(金麦)</button>
         <button class="farmBtn" id="plantNight">🌙 晚上种植(松露)</button>
         <button class="farmBtn" id="harvestAll">🌾 一键收获</button>
         <button class="farmBtn" id="doubleExp">✨ 一键双倍经验</button>
@@ -57,25 +57,25 @@
     document.body.appendChild(panel);
 
     // ==========================================
-    // 🌞 白天一键种植：茉莉
+    // 🌞 白天一键种植：金麦
     // ==========================================
     document.getElementById('plantDay').onclick = async () => {
         const emptyPlots = document.querySelectorAll('.fp-plot.empty .fp-btn.primary');
         if (emptyPlots.length === 0) { alert('🌞 暂无空地可种植！'); return; }
         let count = 0;
-        alert(`🌞 开始批量种植【茉莉】，共 ${emptyPlots.length} 块空地`);
+        alert(`🌞 开始批量种植【金麦】，共 ${emptyPlots.length} 块空地`);
 
         for (const plotBtn of emptyPlots) {
             plotBtn.click();
             await delay(800);
 
             const seedBtn = Array.from(document.querySelectorAll('.fp-seed-card'))
-                .find(card => card.querySelector('.fp-sc-name')?.textContent.trim() === '茉莉')
+                .find(card => card.querySelector('.fp-sc-name')?.textContent.trim() === '金麦')
                 ?.querySelector('.fp-btn.primary.sm');
 
             if (seedBtn) { seedBtn.click(); count++; await delay(600); }
         }
-        alert(`🌞 种植完成！共种下 ${count} 块茉莉`);
+        alert(`🌞 种植完成！共种下 ${count} 块金麦`);
     };
 
     // ==========================================
@@ -97,28 +97,27 @@
 
             if (seedBtn) { seedBtn.click(); count++; await delay(600); }
         }
-        //alert(`🌙 种植完成！共种下 ${count} 块松露`);
+        alert(`🌙 种植完成！共种下 ${count} 块松露`);
     };
 
     // ==========================================
-    // 🌾 一键收获（新增）
+    // 🌾 一键收获
     // ==========================================
     document.getElementById('harvestAll').onclick = async () => {
-        // 匹配成熟地块 + 收获按钮
         const harvestBtns = document.querySelectorAll('.fp-plot.ripe .fp-plot-actions .fp-btn.success');
         if (harvestBtns.length === 0) {
             alert('🌾 暂无成熟作物可收获！');
             return;
         }
         let count = 0;
-        //alert(`🌾 开始收获，共 ${harvestBtns.length} 块成熟地块`);
+        alert(`🌾 开始收获，共 ${harvestBtns.length} 块成熟地块`);
 
         for (const btn of harvestBtns) {
             btn.click();
             count++;
             await delay(400);
         }
-        //alert(`🌾 收获完成！共收获 ${count} 块作物`);
+        alert(`🌾 收获完成！共收获 ${count} 块作物`);
     };
 
     // ==========================================
@@ -129,7 +128,7 @@
         if (plots.length === 0) { alert('✨ 未找到土地！'); return; }
 
         let count = 0;
-        //alert(`✨ 开始为所有土地使用双倍经验卡（共 ${plots.length} 块）`);
+        alert(`✨ 开始为所有土地使用双倍经验卡（共 ${plots.length} 块）`);
 
         for (const plot of plots) {
             const itemBtn = plot.querySelector('.fp-plot-actions .fp-btn.ghost');
@@ -166,7 +165,7 @@
     document.getElementById('steal').onclick = () => {
         const list = document.querySelectorAll('.fp-btn.steal');
         list.forEach(b => b.click());
-        //alert(`🤲 偷菜完成！共偷 ${list.length} 块`);
+        alert(`🤲 偷菜完成！共偷 ${list.length} 块`);
     };
 
     // ==========================================
@@ -181,16 +180,16 @@
 
         for (let i = 0; i < friends.length; i++) {
             friends[i].click();
-            await delay(2200);
+            await delay(1800);
 
             const hasSteal = document.querySelectorAll('.fp-btn.steal').length > 0;
             const hasWater = document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary').length > 0;
 
             if (hasSteal) document.querySelectorAll('.fp-btn.steal').forEach(b => b.click());
             if (hasWater) document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary').forEach(b => b.click());
-            await delay(1000);
+            await delay(800);
         }
-        //alert('✅ 全部好友处理完毕！');
+        alert('✅ 全部好友处理完毕！');
     };
 
 })();
