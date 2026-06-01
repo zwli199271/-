@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         技术博客农场·全自动偷菜浇水版
 // @namespace    http://tampermonkey.net/
-// @version      14.0
-// @description  白天种金麦 | 晚上种松露 | 一键双倍 | 一键收获 | 全自动偷菜浇水
+// @version      14.2
+// @description  白天种金麦 | 晚上种松露 | 一键双倍 | 一键收获 | 全自动偷菜浇水 + 10分钟定时轮询
 // @author       zwli
 // @match        https://www.duanwuqiufenmao.top/*
 // @grant        GM_addStyle
@@ -34,12 +34,21 @@
         #steal { background: #e67e22; }
         #water { background: #3498db; }
         #autoAll { background: #e74c3c; }
+        #autoTips {
+            font-size: 12px; color: #666; text-align:center;
+            margin:6px 0;
+        }
     `);
 
     // 延迟函数
     function delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
+
+    // ========== 定时任务全局变量 10分钟 = 600000ms ==========
+    const AUTO_INTERVAL = 600000; 
+    let autoTimer = null;
+    let autoRunning = false;
 
     // 工具面板
     const panel = document.createElement('div');
@@ -52,9 +61,15 @@
         <button class="farmBtn" id="doubleExp">✨ 一键双倍经验</button>
         <button class="farmBtn" id="steal">🤲 一键偷好友菜</button>
         <button class="farmBtn" id="water">💧 一键帮浇水</button>
-        <button class="farmBtn" id="autoAll">🚀 全自动偷菜浇水</button>
+        <button class="farmBtn" id="autoAll">🚀 开启10分钟自动轮询</button>
+        <div id="autoTips">当前状态：已关闭</div>
     `;
     document.body.appendChild(panel);
+
+    // 更新自动状态文本
+    function updateAutoTip(text) {
+        document.getElementById('autoTips').innerText = `当前状态：${text}`;
+    }
 
     // ==========================================
     // 🌞 白天一键种植：金麦
@@ -115,7 +130,6 @@
         for (const btn of harvestBtns) {
             btn.click();
             count++;
-            await delay(400);
         }
         alert(`🌾 收获完成！共收获 ${count} 块作物`);
     };
@@ -169,27 +183,58 @@
     };
 
     // ==========================================
-    // 🚀 全自动遍历好友偷菜+浇水
+    // 核心：单次遍历好友偷菜+浇水（抽离为独立函数，供定时调用）
     // ==========================================
-    document.getElementById('autoAll').onclick = async () => {
-        if (!confirm('🚀 开始全自动偷菜浇水？')) return;
+    async function runStealAndWater() {
         const friends = document.querySelectorAll('.fp-friend .fp-steal-cta');
-        if (friends.length === 0) { alert('未找到好友！'); return; }
-
-        alert(`找到 ${friends.length} 位好友，开始执行～`);
+        if (friends.length === 0) {
+            console.log('暂无好友列表');
+            return;
+        }
+        console.log(`开始遍历 ${friends.length} 位好友`);
 
         for (let i = 0; i < friends.length; i++) {
             friends[i].click();
-            await delay(1800);
+            await delay(1000);
 
-            const hasSteal = document.querySelectorAll('.fp-btn.steal').length > 0;
-            const hasWater = document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary').length > 0;
+            // 偷菜
+            const stealBtns = document.querySelectorAll('.fp-btn.steal');
+            stealBtns.forEach(b => b.click());
 
-            if (hasSteal) document.querySelectorAll('.fp-btn.steal').forEach(b => b.click());
-            if (hasWater) document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary').forEach(b => b.click());
-            await delay(800);
+            // 浇水
+            const waterBtns = document.querySelectorAll('.fp-plot.thirsty .fp-btn.primary');
+            waterBtns.forEach(b => b.click());
+
+            await delay(200);
         }
-        alert('✅ 全部好友处理完毕！');
+        console.log('本轮好友偷菜浇水执行完毕');
+    }
+
+    // ==========================================
+    // 🚀 启停 10分钟定时自动轮询
+    // ==========================================
+    document.getElementById('autoAll').onclick = () => {
+        const btn = document.getElementById('autoAll');
+
+        if (!autoRunning) {
+            // 开启定时
+            if (!confirm('🚀 确定开启【10分钟自动偷菜浇水轮询】？\n再次点击按钮可关闭')) return;
+            autoRunning = true;
+            btn.innerText = '🚀 关闭自动轮询';
+            updateAutoTip('运行中(每10分钟执行)');
+
+            // 立即执行一次，再开启定时
+            runStealAndWater();
+            autoTimer = setInterval(runStealAndWater, AUTO_INTERVAL);
+        } else {
+            // 关闭定时
+            autoRunning = false;
+            clearInterval(autoTimer);
+            autoTimer = null;
+            btn.innerText = '🚀 开启10分钟自动轮询';
+            updateAutoTip('已关闭');
+            alert('✅ 已停止10分钟自动轮询');
+        }
     };
 
 })();
