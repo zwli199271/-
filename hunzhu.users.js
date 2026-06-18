@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         魂珠合集：一键卸载+一键合成（循环合成至无材料）
+// @name         魂珠合集：一键卸载+一键合成+自动批量镶嵌
 // @namespace    https://www.duanwuqiufenmao.top/qpet/weapons
-// @version      2026-06-18
-// @description  原版卸载逻辑不变，合成自动循环合到材料耗尽，修复单次合成不全
+// @version      2026-06-19
+// @description  原版卸载逻辑不变，合成自动循环合至无材料，新增武器批量自动镶嵌魂珠，点击镶嵌按钮可启停，镶嵌间隔5.5秒
 // @author       zwli+甜心教主
 // @match        https://www.duanwuqiufenmao.top/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=duanwuqiufenmao.top
@@ -37,7 +37,11 @@
         background: linear-gradient(135deg, #409EFF, #2177d8);
         border: 1px solid #e1e5e9;
         color: #fff;
-        margin-left: 10px;
+    }
+    .btn-inlay.active {
+        background: linear-gradient(135deg, #7b2cbf, #9d4edd);
+        border: 1px solid #e1e5e9;
+        color: #fff;
     }
     .weapon-tabs {
         display: flex;
@@ -58,6 +62,19 @@
         const m = str.match(reg);
         return m ? +m[1] : 0;
     }
+
+    // ===================== 全局共用sleep（镶嵌模块复用，带停止检测） =====================
+    let globalStopFlag = false;
+    const baseSleep = ms => new Promise(resolve => {
+        const timer = setTimeout(() => resolve(true), ms);
+        const check = setInterval(() => {
+            if (globalStopFlag) {
+                clearTimeout(timer);
+                clearInterval(check);
+                resolve(false);
+            }
+        }, 200);
+    });
 
     // ===================== 卸载计时器（原版完全不变） =====================
     let unloadTimer = null;
@@ -109,6 +126,249 @@
         mergeTimer = mergeTimer1 = null;
     }
 
+    // ===================== 【新增：自动镶嵌魂珠模块】 =====================
+    let isInlayRunning = false;
+    const ENABLE_LOG = true;
+    const MODAL_FAIL_MAX = 3;
+    const INLAY_INTERVAL = 5500; // 修改2：镶嵌间隔固定5.5秒
+
+    // 镶嵌配置常量
+    const QUALITY_WEIGHT = {
+        "超神器": 5,
+        "神器": 4,
+        "仙器": 3,
+        "灵器": 2,
+        "凡器": 1
+    };
+    const LV_PRIORITY = [5,4,3,2,1];
+    const BEAD_PRIORITY_MAP = {
+        crit: "帅帅",
+        combo: "月璇",
+        throw: "菜菜"
+    };
+    const BASE_BEAD_ORDER = ["剑君", "血灵","帅帅","月璇","菜菜","教主"];
+    const CARD_OWNED = "lib-card-owned";
+    const SLOT_WRAPPER = "weapon-bead-slots";
+    const EMPTY_SLOT = "wbs-empty";
+    const BEAD_TYPE_BTN_PREFIX = "bead-btn-";
+    const ACTIVE_BTN = "active";
+    const CONFIRM_BTN = "bsd-confirm-btn";
+    const CANCEL_BTN = "bsd-cancel-btn";
+    const BEAD_LV_BTN = "bsd-lv-btn";
+    const DISABLED = "disabled";
+
+    function log(...args) {
+        if (ENABLE_LOG) console.log(...args);
+    }
+
+    // 获取待镶嵌武器列表
+    function getAllValidWeapons() {
+        const cards = Array.from($(`.lib-card.${CARD_OWNED}`, true));
+        const validWeapons = [];
+        for(const card of cards) {
+            const slotBox = card.querySelector(`.${SLOT_WRAPPER}`);
+            if(!slotBox) continue;
+            const emptySlots = slotBox.querySelectorAll(`.${EMPTY_SLOT}`);
+            if(emptySlots.length === 0) continue;
+
+            const nameEl = card.querySelector(".lib-name");
+            const qualityEl = card.querySelector(".lib-quality-label");
+            const name = nameEl?.textContent?.trim() || "";
+            const quality = qualityEl?.textContent?.trim() || "凡器";
+
+            const specialText = card.querySelector(".lib-special")?.textContent || "";
+            const canThrow = specialText.includes("可投掷");
+            const isCritWeapon = specialText.includes("暴击");
+            const isComboWeapon = specialText.includes("连击");
+
+            validWeapons.push({
+                el: card,
+                name,
+                quality,
+                canThrow,
+                isCritWeapon,
+                isComboWeapon,
+                weight: QUALITY_WEIGHT[quality] ?? 1
+            });
+        }
+        validWeapons.sort((a,b) => b.weight - a.weight);
+        return validWeapons;
+    }
+
+    function getWeaponEmptySlotCount(weaponEl) {
+        const slotBox = weaponEl.querySelector(`.${SLOT_WRAPPER}`);
+        if (!slotBox) return 0;
+        return slotBox.querySelectorAll(`.${EMPTY_SLOT}`).length;
+    }
+
+    async function openBeadModal(weaponCardEl) {
+        if (globalStopFlag) return false;
+        const emptySlot = weaponCardEl.querySelector(`.${EMPTY_SLOT}`);
+        if(!emptySlot) return false;
+        emptySlot.click();
+        const waitResult = await baseSleep(500);
+        if (!waitResult) return false;
+        return !!$(".bsd-modal");
+    }
+
+    async function closeModal() {
+        if (globalStopFlag) return;
+        const cancelBtn = $(`.${CANCEL_BTN}`);
+        if(cancelBtn) cancelBtn.click();
+    }
+
+    async function selectBeadType(beadName) {
+        if (globalStopFlag) return false;
+        const typeBtn = $(`.${BEAD_TYPE_BTN_PREFIX}${beadName}`);
+        if(!typeBtn) return false;
+        if(!typeBtn.classList.contains(ACTIVE_BTN)) {
+            typeBtn.click();
+            const waitResult = await baseSleep(100);
+            if (!waitResult) return false;
+        }
+        return true;
+    }
+
+    async function selectMaxLvBead() {
+        if (globalStopFlag) return false;
+        const lvBtns = Array.from($(`.${BEAD_LV_BTN}`, true));
+        const lvBtnMap = {};
+        lvBtns.forEach(btn => {
+            const lvText = btn.textContent.match(/(\d+)级/)?.[1];
+            if(lvText) lvBtnMap[Number(lvText)] = btn;
+        });
+        for(const targetLv of LV_PRIORITY) {
+            const targetBtn = lvBtnMap[targetLv];
+            if(!targetBtn) continue;
+            if(!targetBtn.hasAttribute(DISABLED)) {
+                targetBtn.click();
+                await baseSleep(200);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    async function doSingleInlay() {
+        if (globalStopFlag) return false;
+        const confirmBtn = $(`.${CONFIRM_BTN}`);
+        if(!confirmBtn || confirmBtn.hasAttribute(DISABLED)) return false;
+        confirmBtn.click();
+        return true;
+    }
+
+    function getWeaponBeadOrder(weapon) {
+        const tryList = [];
+        if (weapon.isCritWeapon) tryList.push(BEAD_PRIORITY_MAP.crit);
+        if (weapon.isComboWeapon) tryList.push(BEAD_PRIORITY_MAP.combo);
+        if (weapon.canThrow) tryList.push(BEAD_PRIORITY_MAP.throw);
+        const unique = [...new Set(tryList)];
+        return [...unique, ...BASE_BEAD_ORDER];
+    }
+
+    async function handleSingleWeapon(weapon) {
+        log(`【开始处理武器】${weapon.name} | 品质:${weapon.quality} | 暴击:${weapon.isCritWeapon} | 连击:${weapon.isComboWeapon} | 可投掷:${weapon.canThrow}`);
+        let failOpenCount = 0;
+
+        while(true) {
+            if (globalStopFlag) {
+                log("收到停止指令，退出当前武器");
+                break;
+            }
+            const remainSlot = getWeaponEmptySlotCount(weapon.el);
+            if (remainSlot <= 0) break;
+
+            const modalOpen = await openBeadModal(weapon.el);
+            if(!modalOpen) {
+                failOpenCount++;
+                log(`弹窗打开失败，累计失败${failOpenCount}次`);
+                if (failOpenCount >= MODAL_FAIL_MAX) {
+                    log("弹窗失败达到上限，跳过该武器");
+                    break;
+                }
+                await baseSleep(1500);
+                continue;
+            }
+            failOpenCount = 0;
+
+            const beadTryOrder = getWeaponBeadOrder(weapon);
+            let beadSelectSuccess = false;
+            for (const beadName of beadTryOrder) {
+                beadSelectSuccess = await selectBeadType(beadName);
+                if (beadSelectSuccess) break;
+            }
+
+            if(!beadSelectSuccess) {
+                log("无任何可用魂珠类型，结束镶嵌");
+                await closeModal();
+                break;
+            }
+
+            const lvSelect = await selectMaxLvBead();
+            if(!lvSelect) {
+                log("该类型无可用等级魂珠，切换下一类");
+                await closeModal();
+                continue;
+            }
+
+            const inlayOk = await doSingleInlay();
+            if(inlayOk) {
+                log(`镶嵌成功`);
+            } else {
+                log("镶嵌按钮不可点击，跳过本次");
+            }
+
+            await closeModal();
+            const nextRemain = getWeaponEmptySlotCount(weapon.el);
+            if(nextRemain > 0) {
+                log(`等待${INLAY_INTERVAL/1000}秒后进行下一次镶嵌`);
+                await baseSleep(INLAY_INTERVAL);
+            }
+        }
+        log(`【${weapon.name}】镶嵌流程完成`);
+    }
+
+    // 修改1：点击按钮启停镶嵌，运行时再次点击直接停止
+    window.startAutoInlay = async function () {
+        const inlayBtn = $('.btn-inlay');
+        const titleDom = $('.btn-inlay .hz-btn-title');
+        // 如果正在运行，直接下发停止指令，不再启动
+        if(isInlayRunning) {
+            globalStopFlag = true;
+            log("已触发停止镶嵌任务，等待当前操作结束");
+            return;
+        }
+
+        globalStopFlag = false;
+        isInlayRunning = true;
+        inlayBtn.classList.add("active");
+        log("===== 自动镶嵌魂珠脚本启动 =====");
+
+        try {
+            const weapons = getAllValidWeapons();
+            if(weapons.length === 0) {
+                log("无满足条件的武器（未拥有/无空镶嵌槽）");
+                return;
+            }
+            log(`共检测到${weapons.length}把待镶嵌武器，按品质从高到低处理`);
+            for(const weapon of weapons) {
+                if (globalStopFlag) {
+                    log("任务终止指令触发，结束全部镶嵌流程");
+                    break;
+                }
+                await handleSingleWeapon(weapon);
+            }
+            log("===== 全部武器镶嵌任务执行完毕 =====");
+        } catch (err) {
+            log("镶嵌任务执行异常：", err);
+        } finally {
+            isInlayRunning = false;
+            globalStopFlag = false;
+            inlayBtn.classList.remove("active");
+            titleDom.textContent = "自动镶嵌魂珠";
+        }
+    }
+
     // ===================== 路由监听 =====================
     const originalPush = history.pushState;
     history.pushState = function (...args) {
@@ -131,6 +391,7 @@
         }
     }
 
+    // 新增镶嵌按钮到渲染HTML
     function renderBtnGroup() {
         const unloadHtml = `<div class="auto-hz-btn btn-unload" onclick="unLoadAll()">
 <svg width="20" height="20" viewBox="0 0 24 24" style="vertical-align:middle; margin-right:4px;">
@@ -145,7 +406,13 @@
 </svg>
 <span class="hz-btn-title">一键合成</span>
 </div>`;
-        return unloadHtml + mergeHtml;
+        const inlayHtml = `<div class="auto-hz-btn btn-inlay" onclick="startAutoInlay()">
+<svg width="20" height="20" viewBox="0 0 24 24" style="vertical-align:middle;margin-right:4px;">
+<path fill="#fff" d="M12 2L3 9h3v8h6v-6h2v6h6V9h3L12 2z"></path>
+</svg>
+<span class="hz-btn-title">自动镶嵌魂珠</span>
+</div>`;
+        return unloadHtml + mergeHtml + inlayHtml;
     }
 
     // ===================== 【原版卸载逻辑 100%原样无修改】 =====================
