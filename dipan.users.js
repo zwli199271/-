@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         地盘循环攻打选择脚本
 // @namespace    http://tampermonkey.net/
-// @version      1.7
-// @description  勾选地块后持续循环刷新+尝试进攻，点击攻打后自动停止，带收起面板，1分钟内地块高亮
+// @version      1.9
+// @description  勾选地块后持续循环刷新+尝试进攻，自动处理更换地盘确认弹窗，点击攻打后自动停止，带收起面板，1分钟内地块高亮，地块按护盾剩余时间升序排列
 // @author       zwli
 // @match        https://www.duanwuqiufenmao.top/qpet/territory
 // @grant        GM_addStyle
@@ -202,7 +202,7 @@
         return hour * 60 + minute;
     }
 
-    // 抓取全部地块信息存入数组
+    // 抓取全部地块信息存入数组 + 按护盾剩余时间升序排序（最小在前）
     function getAllTerritory() {
         const cards = $$('.terr-slot-card.occupied');
         selectList = [];
@@ -232,8 +232,16 @@
                 isNear
             });
         });
+
+        // 排序：护盾剩余时间从小到大，可攻打(totalMin=null)视为0排最前
+        selectList.sort((a, b) => {
+            const timeA = a.totalMin === null ? 0 : a.totalMin;
+            const timeB = b.totalMin === null ? 0 : b.totalMin;
+            return timeA - timeB;
+        });
+
         renderList();
-        log(`共扫描到 ${selectList.length} 块地盘，列表已刷新`);
+        log(`共扫描到 ${selectList.length} 块地盘，已按护盾剩余时间升序排列，列表已刷新`);
     }
 
     // 渲染可选地块列表，带复选框 + 1分钟内高亮
@@ -315,9 +323,20 @@
                 continue;
             }
             // 出现攻打按钮自动点击，点击后自动停止脚本
-            log(`【${name}】可进攻，自动点击攻打按钮，执行后停止循环`);
+            log(`【${name}】可进攻，自动点击攻打按钮`);
             realBtn.click();
-            await sleep(CONFIG.fightDelay);
+            // 检测更换地盘确认弹窗，自动点继续
+            const changeTerritoryDialog = document.querySelector('.el-message-box');
+            if (changeTerritoryDialog) {
+                const titleText = changeTerritoryDialog.querySelector('.el-message-box__title')?.textContent?.trim();
+                if (titleText === '更换地盘确认') {
+                    const confirmBtn = changeTerritoryDialog.querySelector('.el-message-box__btns .el-button--primary');
+                    if (confirmBtn) {
+                        log('检测到更换地盘确认弹窗，自动点击【继续】');
+                        confirmBtn.click();
+                    }
+                }
+            }
             // 点击攻打后立刻终止所有循环
             stopAll();
             return;
