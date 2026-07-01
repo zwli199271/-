@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         技术博客农场·高性能优化版(Observer+面板收起+加载更多好友+仅好友遍历自动跳过战斗弹窗+无声保活防后台检测)
+// @name         技术博客农场·高性能优化版(带偷取模式切换+松露仅偷满地块)
 // @namespace    http://tampermonkey.net/
-// @version      15.11
-// @description  Mutation无轮询成熟检测、自动加载全部分页好友、好友遍历期间守护+战斗弹窗静默隐藏、自动收种双倍、好友浇水+轮询次数双统计、面板一键折叠，内置无声保活音频防止后台冻结，非好友阶段不处理战斗弹窗，修复MouseEvent报错
+// @version      16.2
+// @description  Mutation无轮询成熟检测、自动加载全部分页好友、偷取模式一键切换(全偷/仅前20高收益)、松露仅偷标注可偷满地块、好友遍历期间守护+战斗弹窗静默隐藏、自动收种双倍、好友浇水+轮询次数双统计、面板一键折叠，内置无声保活音频防止后台冻结，非好友阶段不处理战斗弹窗，修复MouseEvent报错
 // @author       zwli
 // @match        https://www.duanwuqiufenmao.top/*
 // @grant        GM_addStyle
@@ -19,6 +19,31 @@
     const FRIEND_LOAD_DELAY = 1000;
     const BACK_HOME_DELAY = 800;
     const LOAD_MORE_DELAY = 1200; // 加载更多好友等待延时
+    const FULL_RIPE_KEYWORD = "可偷满"; // 松露满成熟标识文字
+
+    // 作物收益前20白名单，仅偷这些作物
+    const TOP20_CROP_LIST = new Set([
+        "冬虫夏草",
+        "天山雪莲",
+        "昙花",
+        "永恒之花",
+        "龙珠果",
+        "幽灵兰",
+        "凤凰果",
+        "松露",
+        "月光草",
+        "大王花",
+        "冰晶花",
+        "黑松露",
+        "蓝玫瑰",
+        "人参",
+        "藏红花",
+        "火龙果",
+        "雪梨",
+        "椰子",
+        "杨桃",
+        "樱花"
+    ]);
 
     GM_addStyle(`
         #farmTools {
@@ -59,6 +84,7 @@
         .farmBtn:disabled { opacity: 0.6; cursor: not-allowed; }
         #autoAll { background: #e74c3c; }
         #autoCheckLand {background:#009688;}
+        #switchStealMode {background:#27ae60; margin-top:4px;}
         #autoTips, #statTips {
             font-size: 12px; color: #666; text-align:center;
             margin:6px 0;
@@ -214,8 +240,9 @@
     let ripeObserver = null; // 成熟地块监听实例
     let isPanelFold = false; // 面板收起标记
     let battleDlgObserver = null; // 仅好友遍历启用的战斗弹窗监听
+    let onlyStealTop20 = true; // 偷取模式开关：true=仅前20，false=全部偷
 
-    // 工具面板（修改统计文字容器id）
+    // 工具面板（新增偷取模式切换按钮）
     const panel = document.createElement('div');
     panel.id = 'farmTools';
     panel.innerHTML = `
@@ -225,6 +252,7 @@
         <div style="font-weight:bold;margin-bottom:8px">🌱 农场工具</div>
         <button class="farmBtn" id="autoCheckLand">开启成熟自动收种双倍</button>
         <button class="farmBtn" id="autoAll">开启10分钟自动轮询</button>
+        <button class="farmBtn" id="switchStealMode">当前：仅偷前20高收益作物</button>
         <div id="autoTips">当前状态：已关闭</div>
         <div id="statTips">累计浇水：0 次 | 已完成轮询：0 轮</div>
     `;
@@ -238,6 +266,27 @@
         foldBtn.innerText = isPanelFold ? "+" : "−";
     };
 
+    // 更新偷取模式按钮文本与颜色
+    function refreshStealModeBtn() {
+        const btn = document.getElementById('switchStealMode');
+        if(onlyStealTop20){
+            btn.innerText = "当前：仅偷前20高收益作物";
+            btn.style.background = "#27ae60";
+        }else{
+            btn.innerText = "当前：全部成熟作物都偷";
+            btn.style.background = "#e67e22";
+        }
+    }
+
+    // 绑定偷取模式切换点击事件
+    document.getElementById('switchStealMode').onclick = ()=>{
+        onlyStealTop20 = !onlyStealTop20;
+        refreshStealModeBtn();
+        const tip = onlyStealTop20 ? "已切换：仅偷收益前20作物（松露只偷可偷满地块）" : "已切换：所有成熟作物全部偷取（松露无满成熟限制）";
+        console.log(`🔄 ${tip}`);
+        alert(tip);
+    };
+
     function updateAutoTip(text) {
         document.getElementById('autoTips').innerText = `当前状态：${text}`;
     }
@@ -246,8 +295,67 @@
         document.getElementById('statTips').innerText = `累计浇水：${totalWaterCount} 次 | 已完成轮询：${totalRoundCount} 轮`;
     }
 
-    // 批量点击
-    async function batchClick(selector, delayMs, isCountWater = false) {
+    // 【分支1：仅偷收益前20作物 + 松露特殊过滤规则】
+    async function stealTop20CropOnly() {
+        const allPlots = document.querySelectorAll('.fp-plot');
+        for(const plot of allPlots) {
+            closeGuardDialog();
+            // 提取地块文字：地块X：作物名 xxx
+            const textEl = plot.querySelector('.fp-plot-text');
+            if(!textEl) continue;
+            const text = textEl.textContent.trim();
+            // 正则提取作物名称
+            const cropMatch = text.match(/地块 \d+：(.+?)\s+/);
+            if(!cropMatch) continue;
+            const cropName = cropMatch[1].trim();
+
+            // 获取偷取按钮
+            const stealBtn = plot.querySelector('.fp-btn.steal');
+            if(!stealBtn) continue; // 未成熟无偷取按钮直接跳过
+
+            // 判断是否在前20白名单
+            if(!TOP20_CROP_LIST.has(cropName)) {
+                console.log(`⏭️ 低收益作物【${cropName}】跳过偷取`);
+                continue;
+            }
+
+            // 松露专属规则：必须包含“可偷满”才偷
+            if(cropName === "松露") {
+                if(text.includes(FULL_RIPE_KEYWORD)) {
+                    console.log(`🥇 松露【可偷满】执行偷取`);
+                    clickElement(stealBtn);
+                    await delay(CLICK_DELAY_SHORT);
+                    closeGuardDialog();
+                    if(battleDlgObserver) scanAllBattleDlg();
+                } else {
+                    console.log(`⏭️ 松露未满成熟，跳过偷取`);
+                }
+                continue;
+            }
+
+            // 其余TOP20作物正常偷取
+            console.log(`🥇 高收益作物【${cropName}】执行偷取`);
+            clickElement(stealBtn);
+            await delay(CLICK_DELAY_SHORT);
+            closeGuardDialog();
+            if(battleDlgObserver) scanAllBattleDlg();
+        }
+    }
+
+    // 【分支2：全部成熟作物直接偷取（旧逻辑，松露无满成熟限制）】
+    async function stealAllRipeCrop() {
+        const stealBtns = document.querySelectorAll('.fp-btn.steal');
+        for (const btn of stealBtns) {
+            clickElement(btn);
+            await delay(CLICK_DELAY_SHORT);
+            closeGuardDialog();
+            if(battleDlgObserver) scanAllBattleDlg();
+        }
+        console.log(`📦 全量偷取成熟地块，共${stealBtns.length}处可偷`);
+    }
+
+    // 批量浇水逻辑不变
+    async function batchClickWater(selector, delayMs, isCountWater = false) {
         const btns = document.querySelectorAll(selector);
         for (const btn of btns) {
             clickElement(btn);
@@ -277,7 +385,7 @@
         console.log("⚔️ 开始好友遍历，启用战斗弹窗自动拦截监听");
     }
 
-    // 好友自动遍历
+    // 好友自动遍历（根据开关自动选择偷取逻辑）
     async function runStealAndWater() {
         try {
             // 进入好友流程，启动战斗弹窗监听
@@ -291,14 +399,21 @@
                 await backMyLand();
                 return;
             }
-            console.log(`【自动任务】开始遍历 ${friends.length} 位好友`);
+            const modeTip = onlyStealTop20 ? "仅前20高收益(松露只偷可偷满)" : "全部成熟作物无限制";
+            console.log(`【自动任务】开始遍历 ${friends.length} 位好友，当前偷取模式：${modeTip}`);
             for (let i = 0; i < friends.length; i++) {
                 closeGuardDialog();
                 clickElement(friends[i]);
                 await delay(FRIEND_LOAD_DELAY);
                 closeGuardDialog();
-                await batchClick('.fp-btn.steal', CLICK_DELAY_SHORT);
-                await batchClick('.fp-plot.thirsty .fp-btn.primary', CLICK_DELAY_SHORT, true);
+                // 根据开关切换偷菜逻辑
+                if(onlyStealTop20){
+                    await stealTop20CropOnly();
+                }else{
+                    await stealAllRipeCrop();
+                }
+                // 浇水逻辑保留不变
+                await batchClickWater('.fp-plot.thirsty .fp-btn.primary', CLICK_DELAY_SHORT, true);
                 updateStatInfo();
                 await delay(CLICK_DELAY_SHORT);
                 closeGuardDialog();
@@ -321,7 +436,8 @@
     // 自动轮询启停
     document.getElementById('autoAll').onclick = function () {
         if (!autoRunning) {
-            if (!confirm('🚀 确定开启【10分钟自动偷菜浇水轮询】？\n自动加载全部分页好友，遍历好友期间自动关闭战斗弹窗，返回地块后停止监听')) return;
+            const modeTip = onlyStealTop20 ? "仅偷收益前20高收益作物（松露仅偷标注可偷满地块）" : "全部成熟作物偷取（松露无限制）";
+            if (!confirm(`🚀 确定开启【10分钟自动偷菜浇水轮询】？\n当前偷取模式：${modeTip}\n自动加载全部分页好友，遍历好友期间自动关闭战斗弹窗，返回地块后停止监听`)) return;
             autoRunning = true;
             this.innerText = '🚀 关闭自动轮询';
             updateAutoTip('运行中(每10分钟执行)');
@@ -420,6 +536,9 @@
     document.getElementById('autoCheckLand').onclick = ()=>{
         checkRunning ? stopAutoCheckLand() : startAutoCheckLand();
     };
+
+    // 初始化偷取模式按钮状态
+    refreshStealModeBtn();
 
     // 脚本初始化：启动无声保活音频
     createSilentKeepAliveAudio();
