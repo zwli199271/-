@@ -2,8 +2,8 @@
 // @name 斗塔一键升级托管
 // @namespace https://www.duanwuqiufenmao.top/
 // @version 2026-06-28
-// @description 斗塔自动使用免费次数和还魂丹升级，支持自选经验水瓶类型
-// @author 甜心教主+zwli
+// @description 斗塔自动使用免费次数和还魂丹升级，支持自选经验水瓶类型，三轮循环：最后1→倒数2→倒数3层循环
+// @author zwli+甜心教主
 // @match https://www.duanwuqiufenmao.top/qpet/tower
 // @match https://www.duanwuqiufenmao.top/qpet/inventory
 // @icon https://www.google.com/s2/favicons?sz=64&domain=duanwuqiufenmao.top
@@ -167,6 +167,9 @@
         });
 
         let type = 0;
+        // 三轮循环计数：0=最后1层，1=倒数2，2=倒数3
+        let runCount = 0;
+
         function getRemainingTimes() {
             const wapInfo = $('.wap-info > strong:first-child')?.textContent;
             const reviveBadge = $('.revive-badge');
@@ -206,9 +209,26 @@
                         return;
                     }
 
-                    const towerGrid = $('.tower-grid > button.tower-floor-btn:last-child');
-                    if (!towerGrid) continue;
-                    towerGrid.click();
+                    // 获取全部楼层按钮
+                    const floorBtns = $('.tower-grid > button.tower-floor-btn', true);
+                    if (floorBtns.length < 3) {
+                        alert('当前解锁楼层不足3层，无法执行三轮循环挂机');
+                        isHosting = false;
+                        btn.textContent = '升级：关';
+                        btn.style.backgroundColor = '#f44336';
+                        return;
+                    }
+
+                    let targetBtn;
+                    if (runCount === 0) {
+                        targetBtn = floorBtns[floorBtns.length - 1];
+                    } else if (runCount === 1) {
+                        targetBtn = floorBtns[floorBtns.length - 2];
+                    } else {
+                        targetBtn = floorBtns[floorBtns.length - 3];
+                    }
+
+                    targetBtn.click();
                     await delay(500 + Math.floor(Math.random() * 300));
 
                     if (type === 2) {
@@ -223,6 +243,9 @@
                         await delay(800 + Math.floor(Math.random() * 200));
                         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
                     }
+
+                    // 计数循环 0/1/2
+                    runCount = (runCount + 1) % 3;
                 } catch (e) {
                     await delay(1000);
                 }
