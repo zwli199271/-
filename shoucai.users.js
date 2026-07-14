@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         技术博客农场·高性能优化版(好友先浇水后偷菜+默认全偷+自动启动开关)
+// @name         技术博客农场·高性能优化版(好友先浇水后偷菜+默认仅前20+自动成熟监听+每小时自动刷新)
 // @namespace    http://tampermonkey.net/
-// @version      16.8
-// @description  Mutation无轮询成熟检测、自动加载全部分页好友、偷取模式一键切换(全偷/仅前20高收益)【默认全偷】、松露仅偷标注可偷满地块、好友单地块先浇水后偷菜、单个好友操作完成后增加停留时间保证操作完整、自家地块支持一键翻地、新增自动启动配置：页面加载完自动开启收种+自动轮询好友、守护+战斗弹窗静默隐藏、自动收种双倍、好友浇水+轮询次数双统计、面板一键折叠，内置无声保活音频防止后台冻结，非好友阶段不处理战斗弹窗，修复MouseEvent报错
+// @version      16.10
+// @description  Mutation无轮询成熟检测、自动加载全部分页好友、偷取模式一键切换(全偷/仅前20高收益)【默认仅前20】、松露仅偷标注可偷满地块、好友单地块先浇水后偷菜、单个好友操作完成后增加停留时间保证操作完整、自家地块支持一键翻地；页面打开自动开启成熟收种监听，每60分钟自动刷新页面；守护+战斗弹窗静默隐藏、自动收种双倍、好友浇水+轮询次数双统计、面板一键折叠，内置无声保活音频防止后台冻结，非好友阶段不处理战斗弹窗，修复MouseEvent报错；页面加载不自动启动好友10分钟轮询
 // @author       zwli
 // @match        https://www.duanwuqiufenmao.top/*
 // @grant        GM_addStyle
@@ -14,18 +14,19 @@
     'use strict';
 
     // ========== 常量配置区 ==========
-    const AUTO_INTERVAL = 10 * 60 * 1000; // 好友自动轮询间隔 10分钟
+    const AUTO_INTERVAL = 10 * 60 * 1000;    // 好友自动轮询间隔 10分钟
+    const PAGE_REFRESH_INTERVAL = 60 * 60 * 1000; // 每60分钟自动刷新页面
     const CLICK_DELAY_SHORT = 200;
     const FRIEND_LOAD_DELAY = 1000;
     const BACK_HOME_DELAY = 800;
     const LOAD_MORE_DELAY = 1200; // 加载更多好友等待延时
     const FULL_RIPE_KEYWORD = "可偷满"; // 松露满成熟标识文字
-    const SINGLE_FRIEND_WAIT = 500; // 单个好友全部操作完成后停留2秒再切换下一位
+    const SINGLE_FRIEND_WAIT = 500; // 单个好友全部操作完成后停留切换下一位
 
-     // 需求：默认全偷模式 false=全部成熟都偷
+    // 配置：页面打开自动启用成熟监听，不自动开启好友轮询
     let onlyStealTop20 = true;
-    // 需自动启动总开关，true=页面加载完自动开启收种+自动轮询好友
-    const autoStartScript = false;
+    const autoStartScript = true; // 仅自动启动成熟监听，取消自动好友轮询
+
     // 作物收益前20白名单，仅偷这些作物
     const TOP20_CROP_LIST = new Set([
         "冬虫夏草",
@@ -235,7 +236,8 @@
     let ripeObserver = null;
     let isPanelFold = false;
     let battleDlgObserver = null;
-   
+    let pageRefreshTimer = null; // 页面定时刷新计时器
+
 
     // 工具面板
     const panel = document.createElement('div');
@@ -247,7 +249,7 @@
         <div style="font-weight:bold;margin-bottom:8px">🌱 农场工具</div>
         <button class="farmBtn" id="autoCheckLand">开启成熟自动收种双倍</button>
         <button class="farmBtn" id="autoAll">开启10分钟自动轮询</button>
-        <button class="farmBtn" id="switchStealMode">当前：全部成熟作物都偷</button>
+        <button class="farmBtn" id="switchStealMode">当前：仅偷前20高收益作物</button>
         <div id="autoTips">当前状态：已关闭</div>
         <div id="statTips">累计浇水：0 次 | 已完成轮询：0 轮</div>
     `;
@@ -430,11 +432,11 @@
         }
     }
 
-    // 自动轮询开关
+    // 自动轮询开关（仅手动点击生效，页面不会自动启动）
     document.getElementById('autoAll').onclick = function () {
         if (!autoRunning) {
             const modeTip = onlyStealTop20 ? "仅偷收益前20高收益作物（松露仅偷标注可偷满地块）" : "全部成熟作物偷取（松露无限制）";
-            if (!confirm(`🚀 确定开启【10分钟自动偷菜浇水轮询】？\n当前偷取模式：${modeTip}\n地块操作顺序：先浇水、后偷菜\n每位好友操作完成后自动停留2秒再切换下一个`)) return;
+            if (!confirm(`🚀 确定开启【10分钟自动偷菜浇水轮询】？\n当前偷取模式：${modeTip}\n地块操作顺序：先浇水、后偷菜\n每位好友操作完成后自动停留0.5秒再切换下一个`)) return;
             autoRunning = true;
             this.innerText = '🚀 关闭自动轮询';
             updateAutoTip('运行中(每10分钟执行)');
@@ -536,23 +538,23 @@
     refreshStealModeBtn();
     createSilentKeepAliveAudio();
 
-    // ====================== 需求3：页面加载完成自动启动逻辑 ======================
+    // ====================== 新增：60分钟自动刷新页面计时器 ======================
+    function startPageRefreshTimer(){
+        if(pageRefreshTimer) return;
+        pageRefreshTimer = setTimeout(()=>{
+            console.log("⏰ 到达60分钟，自动刷新页面");
+            location.reload();
+        }, PAGE_REFRESH_INTERVAL);
+        console.log(`⏱️ 页面自动刷新计时器已启动，${PAGE_REFRESH_INTERVAL/60000}分钟后刷新`);
+    }
+    // 载入页面立刻启动刷新计时
+    startPageRefreshTimer();
+
+    // ====================== 自动启动逻辑：仅自动开启成熟监听，删除自动好友轮询 ======================
     if(autoStartScript){
-        console.log("⚙️ 自动启动开关开启，页面加载完成自动执行收种+好友轮询");
-        // 自动开启自家成熟地块双倍监听
+        console.log("⚙️ 页面加载完成，自动启动成熟地块收种监听（不自动开启好友轮询）");
+        // 仅自动开启成熟监听，去掉延时自动启动好友轮询的代码
         startAutoCheckLand();
-        // 延时后自动启动好友轮询
-        setTimeout(()=>{
-            if(!autoRunning){
-                autoRunning = true;
-                document.getElementById('autoAll').innerText = '🚀 关闭自动轮询';
-                updateAutoTip('运行中(每10分钟执行)【自动启动】');
-                totalWaterCount = 0;
-                totalRoundCount = 0;
-                updateStatInfo();
-                runStealAndWater();
-            }
-        }, 5000);
     }
 
 })();
