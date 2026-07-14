@@ -24,7 +24,7 @@
     const SINGLE_FRIEND_WAIT = 500; // 单个好友全部操作完成后停留切换下一位
 
     // 配置：页面打开自动启用成熟监听，不自动开启好友轮询
-    let onlyStealTop20 = true;
+    let onlyStealTop20 = false;
     const autoStartScript = true; // 仅自动启动成熟监听，取消自动好友轮询
 
     // 作物收益前20白名单，仅偷这些作物
