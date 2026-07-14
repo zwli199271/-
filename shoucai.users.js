@@ -22,6 +22,10 @@
     const FULL_RIPE_KEYWORD = "可偷满"; // 松露满成熟标识文字
     const SINGLE_FRIEND_WAIT = 500; // 单个好友全部操作完成后停留2秒再切换下一位
 
+     // 需求：默认全偷模式 false=全部成熟都偷
+    let onlyStealTop20 = false;
+    // 需自动启动总开关，true=页面加载完自动开启收种+自动轮询好友
+    const autoStartScript = true;
     // 作物收益前20白名单，仅偷这些作物
     const TOP20_CROP_LIST = new Set([
         "冬虫夏草",
@@ -231,10 +235,7 @@
     let ripeObserver = null;
     let isPanelFold = false;
     let battleDlgObserver = null;
-    // 需求2：默认全偷模式 false=全部成熟都偷
-    let onlyStealTop20 = false;
-    // 需求3：自动启动总开关，true=页面加载完自动开启收种+自动轮询好友
-    const autoStartScript = true;
+   
 
     // 工具面板
     const panel = document.createElement('div');
