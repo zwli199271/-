@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         远征双模式【大号建房闯关 / 小号自动入房】
 // @namespace    http://tampermonkey.net/
-// @version      1.2
-// @description  大号打完安图恩自动停止脚本；小号自动入房准备；按钮切换模式，无弹窗
+// @version      1.4
+// @description  修复：小号跳转home后无法自动重启循环；持久化运行状态；大号缺碎片接力、通关安图恩自动停止
 // @author       zwli
 // @match        https://www.duanwuqiufenmao.top/*
 // @grant        none
@@ -37,7 +37,6 @@
     let currentIndex = 0;
     let running = false;
     let stopSignal = false;
-    // 模式："main"大号 | "sub"小号
     let workMode = localStorage.getItem("autoRaidMode") || "sub";
     let subObserver = null;
 
@@ -45,7 +44,6 @@
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    // 通用模拟点击（兼容SVG <g>）
     function triggerClick(el) {
         if (!el) return;
         const evt = new MouseEvent("click", {
@@ -56,14 +54,12 @@
         el.dispatchEvent(evt);
     }
 
-    // Vue el-input 赋值，解决双向绑定不刷新
     function setInputValue(inputEl, value) {
         inputEl.value = value;
         inputEl.dispatchEvent(new Event("input", { bubbles: true }));
         inputEl.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
-    // 根据文本等待按钮
     async function waitBtnByText(text) {
         let targetBtn = null;
         while (!targetBtn && !stopSignal) {
@@ -74,7 +70,6 @@
         return targetBtn;
     }
 
-    // 副本节点查找
     function findNodeByName(nodeName) {
         const nodeList = document.querySelectorAll(".raid-node");
         for (const g of nodeList) {
@@ -86,7 +81,6 @@
         return null;
     }
 
-    // 检测魂珠碎片
     function checkTreasureHasSoulFragment() {
         const items = document.querySelectorAll(".treasure-item");
         for (const item of items) {
@@ -97,7 +91,7 @@
         return false;
     }
 
-    // ========== 大号流程：创建房间 → 等待开始游戏 ==========
+    // ========== 大号：创建房间流程 ==========
     async function runExpeditionPrepare_Main() {
         console.log("【大号模式】开始建房流程");
         if (location.href !== EXPEDITION_URL) {
@@ -128,7 +122,7 @@
         await sleep(2000);
     }
 
-    // ========== 大号：单次副本闯关 ==========
+    // ========== 大号单次副本闯关 ==========
     async function runDungeonOnce_Main() {
         currentIndex = 0;
         while (currentIndex < RAID_ORDER.length && !stopSignal) {
@@ -161,7 +155,7 @@
                 console.log(`魂珠碎片：${hasFragment ? "存在" : "缺失"}`);
 
                 if (!hasFragment) {
-                    console.log("❌缺失魂珠碎片，跳转Home，标记重启远征");
+                    console.log("❌缺失魂珠碎片，跳转Home携带重启标记");
                     location.href = `${HOME_URL}?restartExpedition=1`;
                     return "needRestart";
                 }
@@ -170,21 +164,17 @@
             triggerClick(continueBtn);
             await sleep(POLL_INTERVAL);
 
-            // 新增逻辑：打完安图恩，直接结束任务，不再循环
             if (targetName === LAST_STAGE) {
                 console.log("✅ 安图恩通关，大号任务全部完成，自动停止脚本");
                 return "finishAll";
             }
-
             currentIndex++;
         }
-
         if (stopSignal) return "stop";
-        console.log("✅本轮全部副本通关");
         return "complete";
     }
 
-    // ========== 大号循环入口（修改：通关安图恩不再重启） ==========
+    // ========== 大号完整一轮任务 ==========
     async function runMainTask() {
         console.log("=====【大号】启动一轮远征流程 =====");
         await runExpeditionPrepare_Main();
@@ -194,15 +184,11 @@
         if (dungeonResult === "stop" || dungeonResult === "finishAll") {
             stopAllTask();
         }
-        // needRestart 页面跳转，由url标记接力
     }
 
-    // ========== 小号逻辑：自动加入良人房间 + 准备 ==========
+    // ========== 小号逻辑 ==========
     function runSubTask() {
         if (!running || stopSignal) return;
-        console.log("【小号模式】一轮检测");
-
-        // 最高优先级：检测继续探索按钮，跳转home
         const continueExploreBtns = document.querySelectorAll(".el-button");
         for (const btn of continueExploreBtns) {
             const span = btn.querySelector("span");
@@ -218,27 +204,20 @@
             return;
         }
 
-        // 房间内自动准备
         const readySpan = document.querySelector('span.status-badge.unready');
         if (readySpan && readySpan.textContent.trim() === "准备") {
-            console.log("【小号】自动点击准备");
             triggerClick(readySpan);
             return;
         }
 
-        // 密码弹窗
         const pwdInput = document.querySelector('.el-message-box__input .el-input__inner[placeholder="输入房间密码"]');
         if (pwdInput) {
             setInputValue(pwdInput, ROOM_PWD);
             const confirmBtn = document.querySelector('.el-message-box__btns .el-button--primary');
-            if (confirmBtn) {
-                console.log("【小号】输入密码确认加入");
-                triggerClick(confirmBtn);
-            }
+            if (confirmBtn) triggerClick(confirmBtn);
             return;
         }
 
-        // 大厅寻找良人房间
         const roomItems = document.querySelectorAll(".rooms-list .room-item:not(.disabled)");
         let foundRoom = false;
         for (const item of roomItems) {
@@ -248,39 +227,18 @@
             if (roomName.includes(ROOM_NAME)) {
                 foundRoom = true;
                 const roomMain = item.querySelector(".room-main");
-                if (roomMain) {
-                    console.log("【小号】找到良人房间，点击进入");
-                    triggerClick(roomMain);
-                    return;
-                }
+                if (roomMain) triggerClick(roomMain);
+                return;
             }
         }
-
-        // 刷新大厅
         if (!foundRoom) {
             const refreshBtns = document.querySelectorAll('.header-actions .el-button.el-button--small');
             for (const btn of refreshBtns) {
                 const icon = btn.querySelector('.el-icon');
                 if (icon && icon.textContent.trim() === '🔄') {
-                    console.log("【小号】未找到房间，刷新大厅");
                     triggerClick(btn);
                     return;
                 }
-            }
-        }
-    }
-
-    // ========== 页面载入检测home重启标记 ==========
-    async function autoCheckRestartFlag() {
-        const urlParams = new URLSearchParams(location.search);
-        if (urlParams.get("restartExpedition") === "1") {
-            console.log("✅检测到重启标记，等待5s");
-            history.replaceState({}, document.title, HOME_URL);
-            await sleep(WAIT_AFTER_HOME);
-            if (workMode === "main") {
-                await runExpeditionPrepare_Main();
-            } else if (workMode === "sub") {
-                location.href = EXPEDITION_URL;
             }
         }
     }
@@ -289,6 +247,7 @@
     function stopAllTask() {
         stopSignal = true;
         running = false;
+        localStorage.removeItem("autoRaidRunning");
         if (subObserver) {
             subObserver.disconnect();
             subObserver = null;
@@ -297,18 +256,17 @@
         console.log("脚本已停止");
     }
 
-    // 启动任务
+    // 启动任务【新增持久化运行标记】
     async function startTask() {
         if (running) return;
         running = true;
         stopSignal = false;
+        localStorage.setItem("autoRaidRunning", "1");
         updateUIStatus();
-
         try {
             if (workMode === "main") {
                 await runMainTask();
             } else if (workMode === "sub") {
-                // 小号开启DOM监听持续循环
                 subObserver = new MutationObserver(() => {
                     if (running && workMode === "sub") runSubTask();
                 });
@@ -325,18 +283,39 @@
         }
     }
 
-    // 更新按钮UI样式
+    // ========== 页面加载自动检测重启标记 + 运行持久标记【核心修复】 ==========
+    async function autoCheckRestartFlag() {
+        const urlParams = new URLSearchParams(location.search);
+        const hasRestartFlag = urlParams.get("restartExpedition") === "1";
+        const isPersistRunning = localStorage.getItem("autoRaidRunning") === "1";
+
+        if (hasRestartFlag) {
+            // 清除URL参数，防止反复触发
+            history.replaceState({}, document.title, location.pathname);
+            console.log("✅检测到重启标记");
+
+            if (location.href.includes("/qpet/home")) {
+                console.log("Home页面等待5s，跳转远征");
+                await sleep(WAIT_AFTER_HOME);
+                location.href = EXPEDITION_URL;
+                return;
+            }
+        }
+
+        // 已经抵达远征页面，且存在持久运行标记，自动启动
+        if (location.href.includes("/qpet/raid") && isPersistRunning && !running) {
+            console.log("✅持久运行标记生效，自动启动任务");
+            await startTask();
+        }
+    }
+
     function updateUIStatus() {
         const btnMain = document.getElementById("btn-mode-main");
         const btnSub = document.getElementById("btn-mode-sub");
         const btnCtrl = document.getElementById("btn-control");
         if (!btnMain || !btnSub || !btnCtrl) return;
-
-        // 模式按钮高亮
         btnMain.style.background = workMode === "main" ? "#1677ff" : "#606266";
         btnSub.style.background = workMode === "sub" ? "#1677ff" : "#606266";
-
-        // 启停按钮
         if (running) {
             btnCtrl.textContent = "停止脚本";
             btnCtrl.style.background = "#f5222d";
@@ -346,19 +325,15 @@
         }
     }
 
-    // 创建悬浮控制面板
     function createControlPanel() {
         const wrap = document.createElement("div");
         wrap.style.cssText = `
             position:fixed;z-index:999999;top:12px;right:12px;display:flex;gap:6px;
         `;
-
         const btnMain = document.createElement("button");
         btnMain.id = "btn-mode-main";
         btnMain.innerText = "大号模式";
-        btnMain.style.cssText = `
-            padding:7px 10px;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;
-        `;
+        btnMain.style.cssText = `padding:7px 10px;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;`;
         btnMain.onclick = () => {
             workMode = "main";
             localStorage.setItem("autoRaidMode", workMode);
@@ -368,9 +343,7 @@
         const btnSub = document.createElement("button");
         btnSub.id = "btn-mode-sub";
         btnSub.innerText = "小号模式";
-        btnSub.style.cssText = `
-            padding:7px 10px;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;
-        `;
+        btnSub.style.cssText = `padding:7px 10px;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;`;
         btnSub.onclick = () => {
             workMode = "sub";
             localStorage.setItem("autoRaidMode", workMode);
@@ -379,15 +352,10 @@
 
         const btnCtrl = document.createElement("button");
         btnCtrl.id = "btn-control";
-        btnCtrl.style.cssText = `
-            padding:7px 12px;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;
-        `;
+        btnCtrl.style.cssText = `padding:7px 12px;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;`;
         btnCtrl.onclick = () => {
-            if (running) {
-                stopAllTask();
-            } else {
-                startTask();
-            }
+            if (running) stopAllTask();
+            else startTask();
         };
 
         wrap.appendChild(btnMain);
