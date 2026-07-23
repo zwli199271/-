@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.2
 // @description  大号打完安图恩自动停止脚本；小号自动入房准备；按钮切换模式，无弹窗
-// @author       You
+// @author       zwli
 // @match        https://www.duanwuqiufenmao.top/*
 // @grant        none
 // ==/UserScript==
